@@ -1,18 +1,22 @@
-import { createServer } from "@modelcontextprotocol/sdk/server/index.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-const server = createServer({
-  name: "ecommerce-mcp-server",
-  version: "0.1.0",
-  capabilities: {
-    tools: {}
-  }
-});
+import {
+  geocodeLocation,
+  searchPlacesByBrand
+} from "./services/osm.js";
 
+// ---- Create MCP server ----
+const server = new Server(
+  { name: "ecommerce-mcp-server", version: "0.1.0" },
+  { capabilities: { tools: {} } }
+);
+
+// ---- Register tools list ----
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
@@ -33,6 +37,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   ]
 }));
 
+// ---- Register tool call handler ----
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
@@ -40,30 +45,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error(`Unknown tool: ${name}`);
   }
 
-  const { brand, location, limit = 5 } = args;
+  const { brand, location, radius_km = 5, limit = 5 } = args;
 
-  const places = [
-    {
-      id: "nova-slice-lab",
-      name: "Nova Slice Lab",
-      coords: [-122.4098, 37.8001],
-      description: "Award-winning Neapolitan pies in North Beach.",
-      city: "North Beach",
-      rating: 4.8,
-      price: "$$$",
-      thumbnail: "https://persistent.oaistatic.com/pizzaz/pizzaz-1.png"
-    },
-    {
-      id: "midnight-marinara",
-      name: "Midnight Marinara",
-      coords: [-122.4093, 37.7990],
-      description: "Focaccia-style squares, late-night favorite.",
-      city: "North Beach",
-      rating: 4.6,
-      price: "$",
-      thumbnail: "https://persistent.oaistatic.com/pizzaz/pizzaz-2.png"
-    }
-  ].slice(0, limit);
+  // ---- Geocode user location ----
+  const geo = await geocodeLocation(location);
+
+  // ---- Search OSM for nearby places ----
+  const places = await searchPlacesByBrand({
+    brand,
+    lat: geo.lat,
+    lng: geo.lng,
+    radiusKm: radius_km,
+    limit
+  });
 
   return {
     content: [
@@ -71,7 +65,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         type: "json",
         data: {
           brand,
-          location,
+          location: geo.displayName,
           places
         }
       }
@@ -79,6 +73,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   };
 });
 
+// ---- Connect via stdio transport ----
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
